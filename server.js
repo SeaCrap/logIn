@@ -7,6 +7,10 @@ if(!port){
   console.log('请指定端口号？像这样\nnode server.js 8888 或 \nnode server 8080 这样设置！')
   process.exit(1)
 }
+//一个空对象
+let sessions = {
+
+}
 
 var server = http.createServer(function(request, response){
   var parsedUrl = url.parse(request.url, true)
@@ -16,6 +20,7 @@ var server = http.createServer(function(request, response){
   var path = parsedUrl.pathname
   var query = parsedUrl.query
   var method = request.method 
+  var md5 = require('md5');
 
   /******** 从这里开始看，上面不要看 ************/
 
@@ -26,7 +31,11 @@ var server = http.createServer(function(request, response){
 
   if(path === '/'){
     let string = fs.readFileSync('./index.html','utf8')
-    let cookies = request.headers.cookie.split('; ')//把cookies 用分好+空格分割
+    //这里 cookies 有可能是空 split() 可能会报错 undefined 所以这里如果cookies 存在 再分割
+    let cookies = ''//这里默认为空 就有 length 了
+    if(request.headers.cookie){
+     cookies = request.headers.cookie.split('; ')
+    }
     let hash = {}
     for(let i=0; i<cookies.length; i++){
       let parts = cookies[i].split('=')
@@ -34,7 +43,11 @@ var server = http.createServer(function(request, response){
       let value = parts[1]
       hash[key] = value
     }
-    let email = hash.sign_in_email
+    let mySession = sessions[hash.sessionId]
+    let email// = hash.sign_in_email
+    if(mySession){
+      email = mySession.sign_in_email
+    }
     let users = fs.readFileSync('./db/users.json', 'utf8')
     users = JSON.parse(users)
     let foundUser
@@ -55,6 +68,25 @@ var server = http.createServer(function(request, response){
     response.setHeader('Content-Type', 'text/html;charset=utf-8')
     response.write(string)
     response.end()
+  }else if(path === '/js/main.js'){
+    let string = fs.readFileSync('./js/main.js','utf8')
+    response.setHeader('Content-Type','application/javascript; charset=utf8')
+    //response.setHeader('Cache-Control', 'max-age=30')
+    let fileMd5 = md5(string)
+    response.setHeader('ETag',fileMd5)
+    if(request.headers['if-none-match'] === fileMd5){
+      // 没有响应体
+      response.statusCode = 304
+    }else {
+      response.write(string)
+    }
+    response.end()
+  }else if(path === '/css/default.css', 'utf8'){
+    let string = fs.readFileSync('./css/default.css','utf8')
+    response.setHeader('Content-Type','text/css; charset=utf8')
+    response.setHeader('Cache-Control', 'max-age=30')
+    response.write(string)
+    response.end()
   }else if(path === '/sign_up' && method === 'GET'){
     let string = fs.readFileSync('./sign_up.html','utf8')
     response.statusCode = 200
@@ -63,22 +95,14 @@ var server = http.createServer(function(request, response){
     response.end()
   }else if(path === '/sign_up' && method === 'POST'){
     readBody(request).then((body)=>{
-      //console.log(body)//请求体
-      let strings = body.split('&')//把数据分割成一个数组：['email=x', 'password=xx', 'password_confiramation=xx']
+      let strings = body.split('&')
       let hash = {}
-      strings.forEach((string)=>{ //遍历strings
-        //string == 'email=x'…
-        let parts = string.split('=')//把数据片段(比如'email=x')分割成两部分 ['email', 'x'…]
-        let key = parts[0] //parts的第一个部分 比如 'email'
-        let value = parts[1]//parts的第二部分 比如 'x'
-        //由于url不能用@符号 这里传入的邮箱内的@ 符号 被转为了 40% 需要 decodeURIComponent 再转下
-        hash[key] = decodeURIComponent(value) //hash['email'] = 'x' 
+      strings.forEach((string)=>{ 
+        let parts = string.split('=')
+        let key = parts[0] 
+        let value = parts[1]
+        hash[key] = decodeURIComponent(value) 
       })
-      //生成三个变量
-      //let email = hash['email']
-      //let password = hash['password']
-      //let password_confiramation = hash['password_consiramartions']
-      // ES6 可以简写 等于上边三句
       let {email, password, password_confirmation} = hash
       //做验证判断
       if(email.indexOf('@') === -1){
@@ -95,19 +119,16 @@ var server = http.createServer(function(request, response){
         response.statusCode = 400
         response.write('password not match')
       }else{
-        var users = fs.readFileSync('./db/users.json','utf8')//读取db/users.json
-        //由于之前没有转换@ 把数据存进去了，这里出错可以清空数据
+        var users = fs.readFileSync('./db/users.json','utf8')
         try{
           users = JSON.parse(users)
         }catch(exception){
           users = []
         }
-        //验证 email 是否存在
-        let inUse = false //标记下users
-        // 遍历 users 检查 email 在不在
+        let inUse = false 
         for(let i=0; i < users.length; i++){
           let user = users[i]
-          if(user.email === email){//如果用户传入的 user.email 存在
+          if(user.email === email){
             inUse = true
             break;
           }
@@ -120,10 +141,9 @@ var server = http.createServer(function(request, response){
             }
           }`)
         }else{
-          //users = JSON.parse(users)//把users转为数组对象 此时是一个空数组
-          users.push({email: email, password: password}) // 接收的数据push到数组内
-          var usersString = JSON.stringify(users)//由于数组是个对象 存数据存的是字符串 需要转字符串
-          fs.writeFileSync('./db/users.json', usersString)//把数据存起来(文件，需要替换的数据)
+          users.push({email: email, password: password}) 
+          var usersString = JSON.stringify(users)
+          fs.writeFileSync('./db/users.json', usersString)
           response.statusCode = 200
         }
       }
@@ -137,22 +157,14 @@ var server = http.createServer(function(request, response){
     response.end()
   }else if(path === '/sign_in' && method === 'POST'){
     readBody(request).then((body)=>{
-      //console.log(body)//请求体
-      let strings = body.split('&')//把数据分割成一个数组：['email=x', 'password=xx', 'password_confiramation=xx']
+      let strings = body.split('&')
       let hash = {}
-      strings.forEach((string)=>{ //遍历strings
-        //string == 'email=x'…
-        let parts = string.split('=')//把数据片段(比如'email=x')分割成两部分 ['email', 'x'…]
-        let key = parts[0] //parts的第一个部分 比如 'email'
-        let value = parts[1]//parts的第二部分 比如 'x'
-        //由于url不能用@符号 这里传入的邮箱内的@ 符号 被转为了 40% 需要 decodeURIComponent 再转下
-        hash[key] = decodeURIComponent(value) //hash['email'] = 'x' 
+      strings.forEach((string)=>{ 
+        let parts = string.split('=')
+        let key = parts[0] 
+        let value = parts[1]
+        hash[key] = decodeURIComponent(value)  
       })
-      //生成三个变量
-      //let email = hash['email']
-      //let password = hash['password']
-      //let password_confiramation = hash['password_consiramartions']
-      // ES6 可以简写 等于上边三句
       let {email, password, password_confirmation} = hash
       var users = fs.readFileSync('./db/users.json','utf8')
       try{
@@ -169,8 +181,12 @@ var server = http.createServer(function(request, response){
         }
       }
       if(found){
-        //这是 Cookie 
-        response.setHeader('set-Cookie', `sign_in_email=${email}`)
+        //如果用户信息验证正确
+        //之前给用户一个 Cookie
+        //这里我们给用户一个SessionId
+        let sessionId = Math.random() * 100000 //一个随机数
+        sessions[sessionId] = {sign_in_email:email} // sessions 对象的sessionId = 用户的email与我验证一致的email
+        response.setHeader('set-Cookie', `sessionId=${sessionId}`)//传给用户一个sessionId
         response.statusCode = 200
       }else{
         response.statusCode = 401
